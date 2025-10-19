@@ -1,0 +1,27 @@
+.{
+    .name = .colorful_palette,
+
+    .version = "0.0.0",
+
+    //changing this has security and trust implications.
+    .fingerprint = 0x698703279fff7f8a,
+
+    .minimum_zig_version = "0.15.1",
+
+    .dependencies = .{
+        .zig_reloc = .{
+            .url = "git+https://github.com/omeps/zig-reloc#1615ea9879cfd3063a392f37bc91905bc989b80c",
+            .hash = "zig_reloc-0.0.0-CVZNDtPzAABFNBKbV5IFCE3W4x5xwL9mjo9MYyPjvx7L",
+        },
+        .zigimg = .{
+            .url = "git+https://github.com/zigimg/zigimg#362cdd6bce109f7bc674be134cddd378f52da5d4",
+            .hash = "zigimg-0.1.0-8_eo2jNrFQD4mu3EAUkfQRmCkyfprdIXc8JQ6uyxhjSQ",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

@@ -1,0 +1,36 @@
+#version 450
+struct Pixel {
+	vec3 color;
+	int mean;
+};
+struct Aggregate {
+	vec3 color_sum;
+	int count;
+};
+layout(std140, binding = 0) readonly buffer PixelSSBO {
+   Pixel pixels[];
+};
+layout(std140, binding = 1) writeonly buffer AggregateSSBO {
+   Aggregate aggregates[];
+};
+
+layout (push_constant) uniform Constants {
+	int mean_count;
+	int aggregate_stride;
+} constants;
+layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+//creates mean_count aggregates from 64 pixels.
+void main() {
+	uint index = gl_GlobalInvocationID.x;
+	Aggregate local_aggregates[16];
+	for (uint i = 0; i < 64; i++) {
+		Pixel pixel = pixels[index * 64 + i];
+		local_aggregates[pixel.mean].color_sum += pixel.color;
+		local_aggregates[pixel.mean].count += 1;
+	}
+	for (uint i = 0; i < constants.mean_count; i++) {
+		aggregates[i * constants.aggregate_stride + index] = local_aggregates[i];
+	}
+
+}
+

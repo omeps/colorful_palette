@@ -1,0 +1,25 @@
+#version 450
+struct Aggregate {
+	vec3 color_sum;
+	int count;
+};
+layout(std140, binding = 0) readonly buffer AggregateInSSBO {
+   Aggregate aggregates_in[];
+};layout(std140, binding = 1) writeonly buffer AggregateOutSSBO {
+   Aggregate aggregates_out[];
+};
+layout (push_constant) uniform Constants {
+	uint aggregates_in_stride;
+	uint aggregates_out_stride;
+} constants;
+layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+void main() {
+	uint index = gl_GlobalInvocationID.x;
+	Aggregate total = Aggregate(vec3(0.0), 0);
+	for (uint i = 0; i < 64; i++) {
+		Aggregate aggregate = aggregates_in[index * 64 + i];
+		total = Aggregate(total.color_sum + aggregate.color_sum, total.count + aggregate.count);
+	}
+	uint buf = (index * 64) / constants.aggregates_in_stride;
+	aggregates_out[index + buf * (constants.aggregates_out_stride - constants.aggregates_in_stride / 64)] = total;
+}
