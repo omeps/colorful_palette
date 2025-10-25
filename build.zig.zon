@@ -10,8 +10,8 @@
 
     .dependencies = .{
         .zig_reloc = .{
-            .url = "git+https://github.com/omeps/zig-reloc#1615ea9879cfd3063a392f37bc91905bc989b80c",
-            .hash = "zig_reloc-0.0.0-CVZNDtPzAABFNBKbV5IFCE3W4x5xwL9mjo9MYyPjvx7L",
+            .url = "git+https://github.com/omeps/zig-reloc#cf632e1558108a680e8533b4f275041f3b5147a9",
+            .hash = "zig_reloc-0.0.0-CVZNDsjzAACprJ-T5g7c9KO56J0R6mwDVyTeNYc9wgnz",
         },
         .zigimg = .{
             .url = "git+https://github.com/zigimg/zigimg#362cdd6bce109f7bc674be134cddd378f52da5d4",
