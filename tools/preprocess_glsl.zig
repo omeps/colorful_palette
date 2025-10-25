@@ -12,7 +12,8 @@ pub fn main() !void {
     defer output_file.close();
     var buffer: [1024]u8 = undefined;
     var file_reader = input_file.readerStreaming(&buffer);
-    var file_writer = output_file.writerStreaming(&.{});
+    var wbuffer: [1024]u8 = undefined;
+    var file_writer = output_file.writerStreaming(&wbuffer);
     const reader = &file_reader.interface;
     const writer = &file_writer.interface;
     loop: while (true) {
