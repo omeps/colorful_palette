@@ -49,4 +49,5 @@ pub fn main() !void {
             std.log.err("unknown directive: {s}", .{directive});
         }
     }
+    try file_writer.interface.flush();
 }
