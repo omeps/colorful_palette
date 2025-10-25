@@ -1,0 +1,58 @@
+#version 450
+layout(std140, binding = 1) buffer PixelSSBO {
+        vec4 pixels[];
+};
+layout(std140, binding = 0) buffer MeansSSBO {
+        vec3 means[];
+};
+layout (push_constant) uniform Constants {
+        uint mean_count;
+} constants;
+float mixval(in vec3 closest, in vec3 next_closest, in vec3 color) {
+	vec3 ctn = next_closest - closest;
+	vec3 ctc = color - closest;
+	return clamp(0,1,dot(ctn, ctc) / dot(ctc, ctc));
+}
+void sort(inout vec3 closest, inout vec3 next_closest, in vec3 color) {
+if (distance(closest, color) > distance(next_closest, color)) {
+		vec3 temp = closest;
+		closest = next_closest;
+		next_closest = temp;
+	}
+}
+uint hash( uint x ) {
+    x += ( x << 10u );
+    x ^= ( x >>  6u );
+    x += ( x <<  3u );
+    x ^= ( x >> 11u );
+    x += ( x << 15u );
+    return x;
+}
+vec3 dither (vec3 a, vec3 b, float dither, uint seed) {
+	if (dither < (float((hash(hash(seed) * 31974337) << 28) >> 28) + 0.5) / 17.0) {
+		return a;
+	} else {
+		return b;
+	}
+}
+@include "colorspace.comp"
+layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+void main () {
+	uint index = gl_GlobalInvocationID.x;
+	// vec3 color = pixels[index].xyz;
+	// vec3 closest = means[0];
+	// vec3 next_closest = means[1];
+	// sort(closest, next_closest, color);
+	// for (int i = 2; i < constants.mean_count; i++) {
+	// 	vec3 maybe = means[i];
+	// 	sort(next_closest, maybe, color);
+	// 	sort(closest,next_closest, color);
+	// }
+	// pixels[index] = vec4(dither(
+	// 	colorspace_from(closest), 
+	// 	colorspace_from(next_closest), 
+	// 	mixval(closest, next_closest, color),
+	// 	index
+	// 	), 1.0);
+	means[index] = colorspace_from(means[index]);
+}

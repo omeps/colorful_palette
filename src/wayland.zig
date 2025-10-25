@@ -79,7 +79,7 @@ pub const Client = struct {
     resize: bool,
     resize_ready: bool,
     const app_name = "Data Visualization";
-    pub fn init(self: *@This()) void {
+    pub fn init(self: *@This()) !void {
         self.* = .{
             .display = null,
             .registry = null,

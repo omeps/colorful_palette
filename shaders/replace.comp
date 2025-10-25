@@ -19,4 +19,7 @@ void main() {
 		total.count += aggregate.count;
 	}
 	means[index] = Aggregate(total.color_sum / float(total.count), total.count);
+	if (total.count == 0) {
+		means[index].color_sum = vec3(0);
+	}
 }

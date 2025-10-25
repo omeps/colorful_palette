@@ -11,3 +11,8 @@ pub fn main() !void {
         .override_name = args.next(),
     });
 }
+pub const std_options: std.Options = .{
+    .log_scope_levels = &.{
+        .{ .scope = .colorful_palette, .level = .info },
+    },
+};

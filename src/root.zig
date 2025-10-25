@@ -3,6 +3,7 @@ const vk = @import("vk").vk;
 const zigimg = @import("zigimg");
 const palette_logs = std.log.scoped(.colorful_palette);
 const wayland = @import("wayland.zig");
+const MeanType = extern struct { color: [3]f32, count: u32 };
 pub fn unwrap_code(vulkan_code: c_int) !void {
     return switch (vulkan_code) {
         vk.success => {},
@@ -149,7 +150,7 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
         const properties = try gpa.alloc(vk.LayerProperties, property_count);
         defer gpa.free(properties);
         try unwrap_code(vk.enumerateInstanceLayerProperties(&property_count, properties.ptr));
-        palette_logs.info("properties:", .{});
+        palette_logs.debug("properties:", .{});
         const wanted_properties: []const [:0]const u8 = &.{
             "VK_LAYER_KHRONOS_validation",
         };
@@ -157,7 +158,7 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
         defer found_properties.deinit(gpa);
         for (properties) |property| {
             const layer_name = std.mem.sliceTo(&property.layerName, 0);
-            palette_logs.info("{s}: {s}", .{
+            palette_logs.debug("{s}: {s}", .{
                 layer_name,
                 std.mem.sliceTo(&property.description, 0),
             });
@@ -168,11 +169,11 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
                 }
             }
         }
-        palette_logs.info("properties found:", .{});
+        palette_logs.debug("properties found:", .{});
         for (found_properties.items) |prop| {
-            palette_logs.info("{s}", .{prop});
+            palette_logs.debug("{s}", .{prop});
         }
-        palette_logs.info("extensions:", .{});
+        palette_logs.debug("extensions:", .{});
         const wanted_extensions: []const [:0]const u8 = &.{
             "VK_KHR_surface",
             "VK_KHR_wayland_surface",
@@ -186,7 +187,7 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
         try unwrap_code(vk.enumerateInstanceExtensionProperties(null, &extension_count, extensions.ptr));
         for (extensions) |extension| {
             const extension_name = std.mem.sliceTo(&extension.extensionName, 0);
-            palette_logs.info("{s}", .{extension_name});
+            palette_logs.debug("{s}", .{extension_name});
             for (wanted_extensions) |wanted| {
                 if (std.mem.eql(u8, extension_name, wanted)) {
                     try found_extensions.append(gpa, wanted.ptr);
@@ -194,9 +195,9 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
                 }
             }
         }
-        palette_logs.info("extensions found:", .{});
+        palette_logs.debug("extensions found:", .{});
         for (found_extensions.items) |extension| {
-            palette_logs.info("{s}", .{extension});
+            palette_logs.debug("{s}", .{extension});
         }
         var instance: vk.Instance = undefined;
         try unwrap_code(vk.createInstance(&vk.InstanceCreateInfo{
@@ -226,18 +227,18 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
         try unwrap_code(vk.enumeratePhysicalDevices(instance, &physical_device_count, physical_devices.ptr));
         var best_device_index: usize = 0;
         var best_device_rating: u32 = 0;
-        palette_logs.info("devices:", .{});
+        palette_logs.debug("devices:", .{});
         for (0.., physical_devices) |i, device| {
             var candidate_props: vk.PhysicalDeviceProperties = undefined;
             vk.getPhysicalDeviceProperties(device, &candidate_props);
-            palette_logs.info("{d}: {s}", .{ i, std.mem.sliceTo(&candidate_props.deviceName, 0) });
+            palette_logs.debug("{d}: {s}", .{ i, std.mem.sliceTo(&candidate_props.deviceName, 0) });
             const rating = rateDevice(candidate_props, rate_config);
             if (rating > best_device_rating) {
                 best_device_index = i;
                 best_device_rating = rating;
             }
         }
-        palette_logs.info("choosing device {d}", .{best_device_index});
+        palette_logs.debug("choosing device {d}", .{best_device_index});
         break :device physical_devices[best_device_index];
     };
     const device, const queue, const command_pool, const queue_family = device: {
@@ -327,12 +328,13 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
         break :layout layout;
     };
     defer vk.destroyPipelineLayout(device, layout, null);
-    const pipeline_classify, const pipeline_first_classify, const pipeline_reduce, const pipeline_replace, const pipeline_aggregate = pipelines: {
+    const pipeline_classify, const pipeline_first_classify, const pipeline_reduce, const pipeline_replace, const pipeline_aggregate, const pipeline_unspace = pipelines: {
         const shader_classify align(4) = @embedFile("shaders.classify.comp").*;
         const shader_first_classify align(4) = @embedFile("shaders.first_classify.comp").*;
         const shader_reduce align(4) = @embedFile("shaders.reduce.comp").*;
         const shader_replace align(4) = @embedFile("shaders.replace.comp").*;
         const shader_aggregate align(4) = @embedFile("shaders.aggregate.comp").*;
+        const shader_unspace align(4) = @embedFile("shaders.unspace.comp").*;
 
         var module_classify: vk.ShaderModule = undefined;
         try unwrap_code(vk.createShaderModule(device, &vk.ShaderModuleCreateInfo{
@@ -373,7 +375,15 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
             .codeSize = shader_aggregate.len,
         }, null, &module_aggregate));
         defer vk.destroyShaderModule(device, module_aggregate, null);
-        var pipelines: [5]vk.Pipeline = undefined;
+
+        var module_unspace: vk.ShaderModule = undefined;
+        try unwrap_code(vk.createShaderModule(device, &vk.ShaderModuleCreateInfo{
+            .sType = vk.structure_type_shader_module_create_info,
+            .pCode = @ptrCast(&shader_unspace),
+            .codeSize = shader_unspace.len,
+        }, null, &module_unspace));
+        defer vk.destroyShaderModule(device, module_unspace, null);
+        var pipelines: [6]vk.Pipeline = undefined;
         try unwrap_code(vk.createComputePipelines(device, null, pipelines.len, &[pipelines.len]vk.ComputePipelineCreateInfo{
             .{
                 .sType = vk.structure_type_compute_pipeline_create_info,
@@ -425,6 +435,16 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
                 },
                 .layout = layout,
             },
+            .{
+                .sType = vk.structure_type_compute_pipeline_create_info,
+                .stage = .{
+                    .sType = vk.structure_type_pipeline_shader_stage_create_info,
+                    .module = module_unspace,
+                    .pName = "main",
+                    .stage = vk.shader_stage_compute_bit,
+                },
+                .layout = layout,
+            },
         }, null, &pipelines));
         break :pipelines pipelines;
     };
@@ -433,8 +453,9 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
     defer vk.destroyPipeline(device, pipeline_reduce, null);
     defer vk.destroyPipeline(device, pipeline_replace, null);
     defer vk.destroyPipeline(device, pipeline_aggregate, null);
+    defer vk.destroyPipeline(device, pipeline_unspace, null);
 
-    palette_logs.info("reading image", .{});
+    palette_logs.debug("reading image", .{});
     var zigimg_buffer: [zigimg.io.DEFAULT_BUFFER_SIZE]u8 = undefined;
     var image = try zigimg.Image.fromFilePath(gpa, in_file_name, &zigimg_buffer);
     defer image.deinit(gpa);
@@ -459,7 +480,7 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
         );
         defer vk.freeMemory(device, transfer_memory, null);
         defer vk.destroyBuffer(device, transfer_buffer, null);
-        palette_logs.info("writing image data to buffer", .{});
+        palette_logs.debug("writing image data to buffer", .{});
         var data: [*][4]f32 = undefined;
         try unwrap_code(vk.mapMemory(device, transfer_memory, 0, image_size * 16, 0, @ptrCast(&data)));
         var pixel_iterator = image.iterator();
@@ -473,19 +494,19 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
     defer vk.freeMemory(device, in_memory, null);
     defer vk.destroyBuffer(device, in_buffer, null);
 
-    const mean_count = 10;
+    const mean_count = 8;
     const means_buffer, const means_memory = try createBufferAndMemory(
         physical_device,
         device,
         mean_count * @sizeOf([4]f32),
-        vk.buffer_usage_storage_buffer_bit,
+        vk.buffer_usage_storage_buffer_bit | vk.buffer_usage_vertex_buffer_bit,
         vk.memory_property_host_visible_bit | vk.memory_property_host_coherent_bit,
         queue_family,
     );
     defer vk.freeMemory(device, means_memory, null);
     defer vk.destroyBuffer(device, means_buffer, null);
     const means = map: {
-        var map: [*]extern struct { color: [3]f32, count: u32 } = undefined;
+        var map: [*]MeanType = undefined;
         try unwrap_code(vk.mapMemory(device, means_memory, 0, mean_count * @sizeOf([4]f32), 0, @ptrCast(&map)));
         break :map map[0..mean_count];
     };
@@ -503,19 +524,15 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
             random.float(f32),
         };
     }
-    std.debug.print("hi\n", .{});
     var aggregate_buffer_sizes: std.ArrayList(u32) = .empty;
     defer aggregate_buffer_sizes.deinit(gpa);
     var top_size: u32 = @intCast(image_size);
 
-    std.debug.print("image size: {d}\n", .{top_size});
     while (top_size > 64 * 64) {
         top_size = (((top_size + ((1 << 18) - 1)) >> 6)) & ~@as(u32, ((1 << 12) - 1));
-        std.debug.print("top size: {d}\n", .{top_size});
         try aggregate_buffer_sizes.append(gpa, top_size);
     }
     try aggregate_buffer_sizes.append(gpa, 64);
-    std.debug.print("{any}\n", .{aggregate_buffer_sizes.items});
     const aggregate_buffer_memories: []vk.DeviceMemory = try gpa.alloc(vk.DeviceMemory, aggregate_buffer_sizes.items.len);
     defer gpa.free(aggregate_buffer_memories);
     defer for (aggregate_buffer_memories) |memory| {
@@ -570,7 +587,6 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
     try total_buffers.appendSlice(gpa, aggregate_buffers);
     try total_buffers.append(gpa, means_buffer);
     defer total_buffers.deinit(gpa);
-    std.debug.print("total buffers: {d}\n", .{total_buffers.items.len});
     for (total_buffers.items[0 .. total_buffers.items.len - 1], total_buffers.items[1..], descriptor_sets) |a, b, c| {
         vk.updateDescriptorSets(device, 2, &[_]vk.WriteDescriptorSet{
             vk.WriteDescriptorSet{
@@ -639,16 +655,31 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
     }, fence));
     try unwrap_code(vk.waitForFences(device, 1, &fence, vk.true, ~@as(u32, 0)));
     try unwrap_code(vk.resetFences(device, 1, &fence));
-    var render: @import("Render.zig") = try .init(gpa, instance, physical_device, device, means_buffer);
-    while (true) {
+    const window_manager = @import("config").window_manager;
+    var render = if (window_manager != .none) try @import("Render.zig").init(gpa, instance, physical_device, device, means_buffer) else void{};
+    for (0..75) |_| {
         for (means) |*mean| {
-            palette_logs.info("mean: {any}", .{mean.*});
             if (mean.count == 0) {
-                mean.color = [3]f32{
-                    random.float(f32),
-                    random.float(f32),
-                    random.float(f32),
+                const mean_to_grab = random.uintLessThan(usize, mean_count);
+                const mean_grabbed = mean: {
+                    for (0..mean_count) |i| {
+                        const mean_grabbed = &means[(mean_to_grab + i) % mean_count];
+                        if (mean_grabbed.count > 0) {
+                            palette_logs.debug("selected mean {d}", .{(mean_to_grab + i) % mean_count});
+                            break :mean mean_grabbed;
+                        }
+                    }
+                    break :mean mean;
                 };
+                const variance: @Vector(3, f32) = .{
+                    (random.float(f32) - 0.5) * 0.05,
+                    (random.float(f32) - 0.5) * 0.05,
+                    (random.float(f32) - 0.5) * 0.05,
+                };
+                mean.color = mean_grabbed.color + variance;
+                mean_grabbed.color = mean_grabbed.color - variance;
+
+                break;
             }
         }
         try unwrap_code(vk.beginCommandBuffer(buffer, &vk.CommandBufferBeginInfo{
@@ -676,7 +707,6 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
                 .aggregate_out_stride = @intCast(out_size),
             });
             vk.cmdDispatch(buffer, in_size / 64 / 64 * mean_count, 1, 1);
-            std.debug.print("{d}: {d}\n", .{ set, in_size / 64 / 64 * mean_count });
         }
         vk.cmdBindPipeline(buffer, vk.pipeline_bind_point_compute, pipeline_replace);
         vk.cmdBindDescriptorSets(buffer, vk.pipeline_bind_point_compute, layout, 0, 1, &descriptor_sets[descriptor_sets.len - 1], 0, null);
@@ -688,22 +718,92 @@ pub fn generate(gpa: std.mem.Allocator, in_file_name: []const u8, rate_config: D
             .commandBufferCount = 1,
             .pCommandBuffers = &buffer,
         }, fence));
-        palette_logs.info("dispatching compute shader", .{});
         try unwrap_code(vk.waitForFences(device, 1, &fence, vk.true, ~@as(u32, 0)));
         try unwrap_code(vk.resetFences(device, 1, &fence));
-        for (means) |*mean| {
-            palette_logs.info("mean: {any}", .{mean.*});
-            if (mean.count == 0) {
-                mean.color = [3]f32{
-                    random.float(f32),
-                    random.float(f32),
-                    random.float(f32),
-                };
-            }
-        }
-        if (!try render.render(gpa, device, queue, buffer, in_buffer, image_size, false)) break;
+        if (window_manager != .none) if (!try render.render(gpa, device, queue, buffer, in_buffer, image_size, means_buffer, mean_count, false)) break;
     }
-    render.destroy(gpa, instance, device);
+    if (window_manager != .none) render.destroy(gpa, instance, device);
+
+    try unwrap_code(vk.beginCommandBuffer(buffer, &vk.CommandBufferBeginInfo{
+        .sType = vk.structure_type_command_buffer_begin_info,
+        .pInheritanceInfo = null,
+    }));
+    vk.cmdBindPipeline(buffer, vk.pipeline_bind_point_compute, pipeline_unspace);
+    vk.cmdPushConstants(buffer, layout, vk.shader_stage_compute_bit, 0, @sizeOf(ClassifyConstants), &ClassifyConstants{
+        .mean_count = mean_count,
+    });
+    vk.cmdBindDescriptorSets(buffer, vk.pipeline_bind_point_compute, layout, 0, 1, &descriptor_sets[0], 0, null);
+    vk.cmdDispatch(buffer, mean_count, 1, 1);
+    try unwrap_code(vk.endCommandBuffer(buffer));
+    try unwrap_code(vk.queueSubmit(queue, 1, &vk.SubmitInfo{
+        .sType = vk.structure_type_submit_info,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &buffer,
+    }, fence));
+    try unwrap_code(vk.waitForFences(device, 1, &fence, vk.true, ~@as(u32, 0)));
+    try unwrap_code(vk.resetFences(device, 1, &fence));
+    // {
+    //     const transfer_buffer, const transfer_memory = try createBufferAndMemory(
+    //         physical_device,
+    //         device,
+    //         image_size * @sizeOf([4]f32),
+    //         vk.buffer_usage_transfer_dst_bit,
+    //         vk.memory_property_host_visible_bit | vk.memory_property_host_coherent_bit,
+    //         queue_family,
+    //     );
+    //     defer vk.freeMemory(device, transfer_memory, null);
+    //     defer vk.destroyBuffer(device, transfer_buffer, null);
+    //     palette_logs.debug("reading image data from buffer", .{});
+    //     try copyBuffer(device, queue, command_pool, in_buffer, transfer_buffer, image_size * @sizeOf([4]f32));
+    //     var data: [*][4]f32 = undefined;
+    //     try unwrap_code(vk.mapMemory(device, transfer_memory, 0, image_size * 16, 0, @ptrCast(&data)));
+    //     var out_image = try zigimg.Image.fromRawPixels(gpa, image.width, image.height, @ptrCast(data[0..image_size]), .float32);
+    //     defer out_image.deinit(gpa);
+    //     try out_image.convert(gpa, .rgba32);
+    //     try out_image.writeToFilePath(gpa, out_file_name, &zigimg_buffer, .{ .png = .{} });
+    //     vk.unmapMemory(device, transfer_memory);
+    // }
+    const stdout = std.fs.File.stdout();
+    const ansi_support = stdout.getOrEnableAnsiEscapeSupport();
+    var buf: [1024]u8 = undefined;
+    var writer = stdout.writerStreaming(&buf);
+    const cpuside_means = try gpa.dupe(MeanType, means);
+    defer gpa.free(cpuside_means);
+    std.mem.sort(MeanType, cpuside_means, {}, struct {
+        fn lessthan(_: void, lhs: MeanType, rhs: MeanType) bool {
+            const lhsv: @Vector(3, f32) = lhs.color;
+            const rhsv: @Vector(3, f32) = rhs.color;
+            const weight: @Vector(3, f32) = .{ 0.2126, 0.587, 0.114 };
+            return @reduce(.Add, lhsv * weight) < @reduce(.Add, rhsv * weight);
+        }
+    }.lessthan);
+    for (cpuside_means) |mean| {
+        var color: @Vector(3, f32) = mean.color;
+        color *= @splat(255.0);
+        const rgb: [3]u8 = @as(@Vector(3, u8), @intFromFloat(color));
+        if (ansi_support) try writer.interface.print("\x1b[48;2;{};{};{}m", .{
+            rgb[0],
+            rgb[1],
+            rgb[2],
+        });
+        try writer.interface.print("#{c}{c}{c}{c}{c}{c}\n", .{
+            hex(rgb[0] >> 4),
+            hex(rgb[0] & 15),
+            hex(rgb[1] >> 4),
+            hex(rgb[1] & 15),
+            hex(rgb[2] >> 4),
+            hex(rgb[2] & 15),
+        });
+    }
+    if (ansi_support) try writer.interface.writeAll("\x1b[0m");
+    try writer.interface.flush();
+}
+fn hex(c: u8) u8 {
+    return switch (c) {
+        0...9 => c + '0',
+        10...15 => c - 10 + 'a',
+        else => 'X',
+    };
 }
 pub const DeviceRatingConfig = struct {
     override_name: ?[]const u8,
